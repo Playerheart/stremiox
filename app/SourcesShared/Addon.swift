@@ -86,9 +86,15 @@ private struct StreamsResponse: Decodable { let streams: [Stream] }
 struct AddonClient {
     /// Default metadata addon (public).
     static let cinemeta = "https://v3-cinemeta.strem.io"
+    
+    // 👇 ДОБАВЛЕН РУССКИЙ АДДОН МЕТАДАННЫХ (TMDB)
+    static let tmdb = "https://tmdb.strem.io"
 
     /// Stream-providing addons (base + name) from the signed-in account, e.g. AIOStreams, Torrentio.
-    var streamSources: [StreamSource] = []
+    // 👇 ДОБАВЛЕН TORRENTIO ПО УМОЛЧАНИЮ (для примера)
+    var streamSources: [StreamSource] = [
+        StreamSource(base: "https://torrentio.strem.fun", name: "Torrentio")
+    ]
 
     private static func get<T: Decodable>(_ urlString: String, as: T.Type) async throws -> T {
         guard let url = URL(string: urlString) else { throw URLError(.badURL) }
@@ -98,6 +104,10 @@ struct AddonClient {
         // a Safari-like UA, same lesson as the libmpv stream fetches.
         req.setValue("Mozilla/5.0 (Apple TV; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/604.1",
                      forHTTPHeaderField: "User-Agent")
+        
+        // 👇 ДОБАВЛЕН ЗАГОЛОВОК ДЛЯ РУССКОГО ЯЗЫКА
+        req.setValue("ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
@@ -106,7 +116,8 @@ struct AddonClient {
     }
 
     func catalog(type: String, id: String) async throws -> [MetaPreview] {
-        try await Self.get("\(Self.cinemeta)/catalog/\(type)/\(id).json", as: MetasResponse.self).metas
+        // 👇 ЗАМЕНЕНО НА TMDB
+        try await Self.get("\(Self.tmdb)/catalog/\(type)/\(id).json", as: MetasResponse.self).metas
     }
 
     /// Catalog from a specific installed addon (the user's own catalogs, e.g. Debridio TMDB).
@@ -123,11 +134,13 @@ struct AddonClient {
 
     func search(type: String, query: String) async throws -> [MetaPreview] {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? query
-        return try await Self.get("\(Self.cinemeta)/catalog/\(type)/top/search=\(q).json", as: MetasResponse.self).metas
+        // 👇 ЗАМЕНЕНО НА TMDB ДЛЯ ПОИСКА НА РУССКОМ
+        return try await Self.get("\(Self.tmdb)/catalog/\(type)/top/search=\(q).json", as: MetasResponse.self).metas
     }
 
     func meta(type: String, id: String) async throws -> MetaItem {
-        try await meta(base: Self.cinemeta, type: type, id: id)
+        // 👇 ЗАМЕНЕНО НА TMDB
+        try await meta(base: Self.tmdb, type: type, id: id)
     }
 
     /// Metadata from a specific addon base, lets us resolve titles from whichever meta addon owns
