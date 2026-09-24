@@ -81,19 +81,30 @@ private struct MetasResponse: Decodable { let metas: [MetaPreview] }
 private struct MetaResponse: Decodable { let meta: MetaItem }
 private struct StreamsResponse: Decodable { let streams: [Stream] }
 
-/// Talks to Stremio addons over HTTP (no core/WebKit needed). Cinemeta supplies catalogs +
-/// metadata; a configurable stream addon (e.g. AIOStreams) supplies playable streams.
+/// Talks to Stremio addons over HTTP (no core/WebKit needed). TMDB supplies catalogs +
+/// metadata (Russian); Torrentio supplies playable streams from Russian trackers (Rutor, Rutracker).
 struct AddonClient {
-    /// Default metadata addon (public).
+    /// Default metadata addon (public, English-only fallback).
     static let cinemeta = "https://v3-cinemeta.strem.io"
-    
-    // 👇 ДОБАВЛЕН РУССКИЙ АДДОН МЕТАДАННЫХ (TMDB)
+
+    /// Russian metadata addon (titles, descriptions, posters in Russian).
     static let tmdb = "https://tmdb.strem.io"
 
-    /// Stream-providing addons (base + name) from the signed-in account, e.g. AIOStreams, Torrentio.
-    // 👇 ДОБАВЛЕН TORRENTIO ПО УМОЛЧАНИЮ (для примера)
+    /// Stream-providing addons (base + name) from the signed-in account.
+    /// Torrentio is pre-configured with Russian trackers (Rutor, Rutracker) and
+    /// `language=russian` priority. URL params keep `|` percent-encoded as `%7C`.
     var streamSources: [StreamSource] = [
-        StreamSource(base: "https://torrentio.strem.fun", name: "Torrentio")
+        StreamSource(
+            base: "https://torrentio.strem.fun"
+                + "/providers=rutor,rutracker,yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,"
+                + "torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,nekobt,comando,"
+                + "bludv,micoleaodublado,torrent9,ilcorsaronero,mejortorrent,wolfmax4k,cinecalidad,"
+                + "besttorrents"
+                + "%7Clanguage=russian"
+                + "%7Cqualityfilter=1080p,720p,480p"
+                + "%7Csizefilter=10GB",
+            name: "Torrentio"
+        )
     ]
 
     private static func get<T: Decodable>(_ urlString: String, as: T.Type) async throws -> T {
@@ -102,11 +113,13 @@ struct AddonClient {
         req.timeoutInterval = 20
         // Some addon CDNs reject non-browser User-Agents (Cinemeta 403s the default), so present
         // a Safari-like UA, same lesson as the libmpv stream fetches.
-        req.setValue("Mozilla/5.0 (Apple TV; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/604.1",
-                     forHTTPHeaderField: "User-Agent")
-        
-        // 👇 ДОБАВЛЕН ЗАГОЛОВОК ДЛЯ РУССКОГО ЯЗЫКА
-        req.setValue("ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+        req.setValue(
+            "Mozilla/5.0 (Apple TV; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        // Ask every addon for Russian metadata first, with English as fallback.
+        req.setValue("ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+                     forHTTPHeaderField: "Accept-Language")
 
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -115,31 +128,41 @@ struct AddonClient {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    // MARK: - Catalogs
+
+    /// Default catalog (Russian metadata via TMDB).
     func catalog(type: String, id: String) async throws -> [MetaPreview] {
-        // 👇 ЗАМЕНЕНО НА TMDB
-        try await Self.get("\(Self.tmdb)/catalog/\(type)/\(id).json", as: MetasResponse.self).metas
+        try await Self.get("\(Self.tmdb)/catalog/\(type)/\(id).json",
+                           as: MetasResponse.self).metas
     }
 
     /// Catalog from a specific installed addon (the user's own catalogs, e.g. Debridio TMDB).
     func catalog(base: String, type: String, id: String) async throws -> [MetaPreview] {
-        try await Self.get("\(base)/catalog/\(type)/\(id).json", as: MetasResponse.self).metas
+        try await Self.get("\(base)/catalog/\(type)/\(id).json",
+                           as: MetasResponse.self).metas
     }
 
     /// Genre-filtered catalog. Stremio's "extra" params are encoded as a path segment before
     /// `.json` (e.g. `/catalog/movie/top/genre=Comedy.json`), NOT a `?genre=` query string.
     func catalog(base: String, type: String, id: String, genre: String) async throws -> [MetaPreview] {
         let g = genre.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? genre
-        return try await Self.get("\(base)/catalog/\(type)/\(id)/genre=\(g).json", as: MetasResponse.self).metas
+        return try await Self.get("\(base)/catalog/\(type)/\(id)/genre=\(g).json",
+                                  as: MetasResponse.self).metas
     }
 
+    // MARK: - Search
+
+    /// Search using TMDB so Russian-language titles match.
     func search(type: String, query: String) async throws -> [MetaPreview] {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? query
-        // 👇 ЗАМЕНЕНО НА TMDB ДЛЯ ПОИСКА НА РУССКОМ
-        return try await Self.get("\(Self.tmdb)/catalog/\(type)/top/search=\(q).json", as: MetasResponse.self).metas
+        return try await Self.get("\(Self.tmdb)/catalog/\(type)/top/search=\(q).json",
+                                  as: MetasResponse.self).metas
     }
 
+    // MARK: - Meta (details)
+
+    /// Default meta (Russian metadata via TMDB).
     func meta(type: String, id: String) async throws -> MetaItem {
-        // 👇 ЗАМЕНЕНО НА TMDB
         try await meta(base: Self.tmdb, type: type, id: id)
     }
 
@@ -147,8 +170,11 @@ struct AddonClient {
     /// the id (Cinemeta `tt…`, TMDB `tmdb:…`, Kitsu `kitsu:…`), not just Cinemeta.
     func meta(base: String, type: String, id: String) async throws -> MetaItem {
         let safeId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        return try await Self.get("\(base)/meta/\(type)/\(safeId).json", as: MetaResponse.self).meta
+        return try await Self.get("\(base)/meta/\(type)/\(safeId).json",
+                                  as: MetaResponse.self).meta
     }
+
+    // MARK: - Streams
 
     /// Streams for a movie (`videoId == imdbId`) or episode (`imdbId:season:episode`), aggregated
     /// across the account's stream addons. Each stream is tagged with the addon that supplied it so
