@@ -134,19 +134,12 @@ jobs:
 
       - name: Attach the CI builds to the release
         if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          mv out/StremioX-tvOS-ci.ipa "out/StremioX-tvOS-$TAG-ci.ipa"
-          mv out/StremioX-tvOS-lite-ci.ipa "out/StremioX-tvOS-lite-$TAG-ci.ipa"
-          mv out/StremioX-iOS-ci.ipa "out/StremioX-iOS-$TAG-ci.ipa"
-          mv out/StremioX-macOS-ci.zip "out/StremioX-macOS-$TAG-ci.zip"
-          shasum -a 256 "out/StremioX-tvOS-$TAG-ci.ipa" "out/StremioX-tvOS-lite-$TAG-ci.ipa" "out/StremioX-iOS-$TAG-ci.ipa" "out/StremioX-macOS-$TAG-ci.zip" > out/SHA256SUMS-ci.txt
-          gh release upload "$TAG" \
-            "out/StremioX-tvOS-$TAG-ci.ipa" \
-            "out/StremioX-tvOS-lite-$TAG-ci.ipa" \
-            "out/StremioX-iOS-$TAG-ci.ipa" \
-            "out/StremioX-macOS-$TAG-ci.zip" \
-            out/SHA256SUMS-ci.txt \
-            --clobber
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            out/StremioX-tvOS-ci.ipa
+            out/StremioX-tvOS-lite-ci.ipa
+            out/StremioX-iOS-ci.ipa
+            out/StremioX-macOS-ci.zip
+            out/SHA256SUMS-ci.txt
