@@ -57,20 +57,31 @@ struct iOSRootView: View {
             // Selected screen fills the space above the bar. We keep all six in a ZStack so each
             // screen's own state (scroll position, search query, engine subscriptions) survives a
             // tab switch instead of being torn down and rebuilt every time.
-            ZStack {
-                // `isActive` gates each browse screen's `.principal` wordmark: on macOS a principal
-                // toolbar item is hoisted into the shared window titlebar, and every mounted
-                // NavigationStack would otherwise stamp its own — tiling "StremioX" once per screen.
-                // Only the visible tab contributes its wordmark (#46 regression).
-                iOSHomeView(isActive: tab == .home).opacity(tab == .home ? 1 : 0)
-                iOSDiscoverView(isActive: tab == .discover).opacity(tab == .discover ? 1 : 0)
-                iOSLiveView().opacity(tab == .live ? 1 : 0)
-                iOSLibraryView(isActive: tab == .library).opacity(tab == .library ? 1 : 0)
-                iOSSearchView(isActive: tab == .search).opacity(tab == .search ? 1 : 0)
-                AddonsView().opacity(tab == .addons ? 1 : 0)
-                iOSSettingsView().opacity(tab == .settings ? 1 : 0)
+            //
+            // GeometryReader + explicit frame: the ZStack mounts ALL seven tabs at once (invisible
+            // ones via `.opacity(0)`), and a plain ZStack sizes to its WIDEST child. If any hidden
+            // tab (e.g. Add-ons' long manifest URLs, or a horizontal chip ScrollView in Settings)
+            // reports an intrinsic width wider than the screen, the ZStack adopts that width and
+            // hands it DOWN to the visible screen's NavigationStack — which is why iOSDetailView's
+            // hero backdrop spilled past the screen edges while everything looked fine on the tab
+            // root. Pinning the ZStack to the exact viewport width via GeometryReader stops any
+            // hidden tab from stretching the layout coordinate space.
+            GeometryReader { geo in
+                ZStack {
+                    // `isActive` gates each browse screen's `.principal` wordmark: on macOS a principal
+                    // toolbar item is hoisted into the shared window titlebar, and every mounted
+                    // NavigationStack would otherwise stamp its own — tiling "StremioX" once per screen.
+                    // Only the visible tab contributes its wordmark (#46 regression).
+                    iOSHomeView(isActive: tab == .home).opacity(tab == .home ? 1 : 0)
+                    iOSDiscoverView(isActive: tab == .discover).opacity(tab == .discover ? 1 : 0)
+                    iOSLiveView().opacity(tab == .live ? 1 : 0)
+                    iOSLibraryView(isActive: tab == .library).opacity(tab == .library ? 1 : 0)
+                    iOSSearchView(isActive: tab == .search).opacity(tab == .search ? 1 : 0)
+                    AddonsView().opacity(tab == .addons ? 1 : 0)
+                    iOSSettingsView().opacity(tab == .settings ? 1 : 0)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             customTabBar
         }
