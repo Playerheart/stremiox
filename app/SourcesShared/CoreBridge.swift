@@ -535,8 +535,8 @@ final class CoreBridge: ObservableObject {
 
     /// Display info for an overlay watch entry when a toggle arrives by bare id (the
     /// Library tab and poster menus). Resolved from whatever state already holds the
-    /// title; nil means nothing knows it and the toggle is dropped rather than creating
-    /// a nameless Continue Watching card.
+    /// title; nil means nothing knows it and the toggle is dropped rather than creating a
+    /// nameless Continue Watching card.
     private func overlayDisplayInfo(forId id: String) -> (name: String, type: String, poster: String?)? {
         if let meta = metaDetails?.meta, meta.id == id { return (meta.name, meta.type, meta.poster) }
         if let item = continueWatching.first(where: { $0.id == id }) { return (item.name, item.type, item.poster) }
@@ -949,6 +949,11 @@ final class CoreBridge: ObservableObject {
     /// Build titled board rows: merge each catalog's ready pages into one item list and resolve a
     /// human title from the installed-addon manifests. Rows with no loaded items are skipped, so they
     /// appear as their content arrives (no empty placeholders).
+    ///
+    /// The rows are then REORDERED according to the user's saved addon order (drag-and-drop on the
+    /// Add-ons tab, persisted under `addonOrder` as comma-separated transportUrls). This makes a
+    /// catalog addon the user moved to the top (e.g. TMDB ahead of Cinemeta) actually render its
+    /// rails first on Home. When no custom order is saved, the engine's own order is preserved.
     private func buildBoardRows() -> [CoreBoardRow] {
         guard let board = decode(CoreBoardState.self, field: "board") else { return [] }
         let titles = catalogTitleMap()
@@ -961,7 +966,32 @@ final class CoreBridge: ObservableObject {
             rows.append(CoreBoardRow(id: key, title: titles[key] ?? request.path.id,
                                      type: request.path.type, items: items))
         }
+
+        let order = Self.savedAddonOrder()
+        if !order.isEmpty {
+            let index = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+            rows.sort { lhs, rhs in
+                let lhsBase = Self.baseFromRowID(lhs.id)
+                let rhsBase = Self.baseFromRowID(rhs.id)
+                return (index[lhsBase] ?? Int.max) < (index[rhsBase] ?? Int.max)
+            }
+        }
         return rows
+    }
+
+    /// The user's saved addon order (comma-joined transportUrls), or [] if they never reordered.
+    /// Written by `AddonsView` when rows are dragged; read here so Home/Discover catalog rows follow
+    /// the same order the user sees on the Add-ons tab.
+    private static func savedAddonOrder() -> [String] {
+        let raw = UserDefaults.standard.string(forKey: "addonOrder") ?? ""
+        return raw.split(separator: ",").map(String.init)
+    }
+
+    /// Extract the addon transportUrl from a board row's `base|type|id` key. Transport URLs never
+    /// contain a `|`, so splitting on the first `|` is safe.
+    private static func baseFromRowID(_ rowID: String) -> String {
+        guard let pipe = rowID.firstIndex(of: "|") else { return rowID }
+        return String(rowID[..<pipe])
     }
 
     /// The Home board rows whose content type is Live TV (tv / channel / events), for the Live
