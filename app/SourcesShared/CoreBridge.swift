@@ -224,6 +224,15 @@ final class CoreBridge: ObservableObject {
                  field: "board")
     }
 
+    /// Rebuild the Home board rows using the current saved addon order from `UserDefaults`.
+    /// Called by `AddonsView` right after a drag / Move Up / Move Down, so the catalog rails on
+    /// Home and Discover update immediately without needing to reload the whole board from the
+    /// engine. Without this, reordering only changed the Add-ons list, not the catalogs.
+    func refreshBoardOrder() {
+        let rows = buildBoardRows()
+        DispatchQueue.main.async { [weak self] in self?.boardRows = rows }
+    }
+
     // MARK: Discover / Library
 
     /// Load Discover's default catalog (the engine picks the first selectable type).
@@ -451,8 +460,8 @@ final class CoreBridge: ObservableObject {
 
     /// Flatten stremio-core's `ResourceError` / `EnvError` JSON into a short human string. Returns nil
     /// for `EmptyContent` (the add-on returned an empty list — not an error). Tagged-enum shapes:
-    /// `{"type":"Fetch","content":"…"}`, `{"type":"Env","content":{"type":"Fetch","content":"…"}}`, or a bare string.
-    private static func describeResourceError(_ content: Any?) -> String? {
+    /// `{"type":"Fetch","content":"…"}`, `{"(["type":"Env","content":{"type":"Fetch","content":"…"}}`, or a bare string.
+    private static func describeResourceError(_ content: Anyaction?) -> String? {
         if let s = content as? String { return s }
         guard let d = content as? [String: Any] else { return "error" }
         let type = d["type"] as? String
@@ -489,7 +498,7 @@ final class CoreBridge: ObservableObject {
         // Clear each video explicitly (the same path single-episode unwatch uses) so
         // the ticks actually drop; watched stays the efficient aggregate action.
         if isWatched {
-            dispatchMetaDetails(["action": "MarkAsWatched", "args": true])
+            dispatchMetaDetails": "MarkAsWatched", "args": true])
             return
         }
         guard let videos = metaDetails?.meta?.videos, !videos.isEmpty else {
