@@ -81,14 +81,6 @@ struct iOSDetailView: View {
     }
 
     var body: some View {
-        // GeometryReader + explicit width on the VStack: a vertical ScrollView in SwiftUI does NOT
-        // reliably bound the cross-axis width of its content. `.frame(maxWidth: .infinity)` on the
-        // VStack sizes it to the parent's PROPOSAL, but if that proposal is unbounded (which it can be
-        // inside a ScrollView), the VStack falls back to its children's ideal width — and the hero's
-        // wide logo / meta row / synopsis then push the whole column wider than the screen, shifting
-        // the entire detail page to a negative x and clipping the leading edge (the "MAYDAY title cut
-        // off" report). Pinning the VStack to `geo.size.width` forces a hard viewport width so no
-        // child can stretch the layout coordinate space.
         GeometryReader { geo in
             ScrollViewReader { proxy in
                 ScrollView {
@@ -105,8 +97,6 @@ struct iOSDetailView: View {
                         }
                     }
                     .padding(.bottom, Theme.Space.xl)
-                    // Hard width pin (not `maxWidth: .infinity`): forces the column to exactly the
-                    // viewport width so no child can push it wider than the screen.
                     .frame(width: geo.size.width, alignment: .leading)
                 }
             }
@@ -1018,3 +1008,249 @@ struct iOSSourceList: View {
                 } else {
                     emptyState
                 }
+            } else {
+                controlBar
+                if loading && progress.total > 0 {
+                    Text("Still finding more · \(progress.loaded)/\(progress.total) add-ons")
+                        .font(Theme.Typography.label).foregroundStyle(Theme.Palette.textTertiary)
+                }
+                if showAllSources {
+                    if groups.count > 1 { filterBar }
+                    groupedList
+                }
+            }
+        }
+    }
+
+    // MARK: Controls
+
+    @ViewBuilder private var controlBar: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            if let best = StreamRanking.best(groups, continuity: continuity), let url = best.playableURL {
+                HStack(spacing: Theme.Space.sm) {
+                    Button { play(best, url) } label: {
+                        Label("Watch in \(StreamRanking.watchLabel(best))", systemImage: "play.fill")
+                    }
+                    .buttonStyle(PrimaryActionStyle())
+
+                    qualityMenu
+                }
+            }
+            HStack(spacing: Theme.Space.sm) {
+                Button { withAnimation { showAllSources.toggle() } } label: {
+                    Label(showAllSources ? "Hide sources" : "All sources · \(streamCount)",
+                          systemImage: showAllSources ? "chevron.up" : "list.bullet")
+                }
+                .buttonStyle(ChipButtonStyle(selected: showAllSources))
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    @ViewBuilder private var qualityMenu: some View {
+        let tiers = StreamRanking.tiers(groups)
+        if !tiers.isEmpty {
+            Menu {
+                ForEach(tiers, id: \.self) { tier in
+                    Menu(tier) {
+                        ForEach(StreamRanking.variantOptions(groups, tier: tier), id: \.label) { option in
+                            if let url = option.stream.playableURL {
+                                Button(option.label) { play(option.stream, url) }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label("Quality", systemImage: "chevron.up.chevron.down")
+            }
+            .buttonStyle(ChipButtonStyle())
+        }
+    }
+
+    private var filterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.Space.sm) {
+                Button { sourceFilter = nil } label: { Text("All (\(streamCount))") }
+                    .buttonStyle(ChipButtonStyle(selected: sourceFilter == nil))
+                ForEach(groups) { group in
+                    Button { sourceFilter = group.addon } label: { Text("\(group.addon) (\(group.streams.count))") }
+                        .buttonStyle(ChipButtonStyle(selected: sourceFilter == group.addon))
+                }
+            }
+            .padding(.vertical, Theme.Space.xs)
+        }
+    }
+
+    private var groupedList: some View {
+        LazyVStack(spacing: Theme.Space.sm) {
+            ForEach(visibleGroups) { group in
+                Section {
+                    if !collapsed.contains(group.addon) {
+                        ForEach(Array(group.streams.enumerated()), id: \.offset) { _, stream in
+                            streamRow(group.addon, stream)
+                        }
+                    }
+                } header: {
+                    sectionHeader(group)
+                }
+            }
+        }
+    }
+
+    private func sectionHeader(_ group: CoreStreamSourceGroup) -> some View {
+        let isCollapsed = collapsed.contains(group.addon)
+        return Button {
+            withAnimation(Theme.Motion.state) {
+                if isCollapsed { collapsed.remove(group.addon) } else { collapsed.insert(group.addon) }
+            }
+        } label: {
+            HStack(spacing: Theme.Space.sm) {
+                Text(group.addon.uppercased())
+                    .font(Theme.Typography.eyebrow).tracking(1.5)
+                    .foregroundStyle(Theme.Palette.accent)
+                Text("\(group.streams.count)")
+                    .font(Theme.Typography.label).foregroundStyle(Theme.Palette.textTertiary)
+                Spacer(minLength: 0)
+                Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.textSecondary)
+            }
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.vertical, Theme.Space.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.Palette.surface2.opacity(0.6),
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(group.addon) sources")
+        .accessibilityHint(isCollapsed ? "Double-tap to expand" : "Double-tap to collapse")
+        .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    @ViewBuilder private func streamRow(_ addon: String, _ stream: CoreStream) -> some View {
+        if let url = stream.playableURL {
+            Button { play(stream, url) } label: {
+                iOSStreamLabel(addon: addon, stream: stream, enabled: true)
+            }
+            .buttonStyle(RowFocusStyle())
+        } else {
+            iOSStreamLabel(addon: addon, stream: stream, enabled: false)
+                .background(Theme.Palette.surface1.opacity(0.5),
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        }
+    }
+
+    private var eyebrow: String {
+        let count = streamCount
+        if count == 0 { return loading ? "Searching" : "None found" }
+        return loading ? "\(count) so far" : "\(count) source\(count == 1 ? "" : "s")"
+    }
+}
+
+private struct iOSStreamLabel: View {
+    let addon: String
+    let stream: CoreStream
+    let enabled: Bool
+
+    var body: some View {
+        let quality = StreamRanking.qualityLabel(stream)
+        let detail = StreamRanking.sourceDetail(stream)
+        return HStack(alignment: .top, spacing: Theme.Space.md) {
+            Image(systemName: enabled ? (stream.isTorrent ? "arrow.down.circle.fill" : "play.circle.fill") : "lock.circle")
+                .font(.system(size: 26))
+                .foregroundStyle(enabled ? Theme.Palette.accent : Theme.Palette.textTertiary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    badge(quality, prominent: true)
+                    badge(addon.uppercased())
+                    if stream.isTorrent { badge("TORRENT") }
+                }
+                HStack(spacing: 8) {
+                    Text(detail.tags)
+                        .font(Theme.Typography.label)
+                        .foregroundStyle(enabled ? Theme.Palette.textPrimary : Theme.Palette.textTertiary)
+                        .lineLimit(1)
+                    if let size = detail.size {
+                        Text(size)
+                            .font(Theme.Typography.label)
+                            .foregroundStyle(Theme.Palette.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+                if let title = cleanTitle {
+                    Text(title)
+                        .font(Theme.Typography.label)
+                        .foregroundStyle(Theme.Palette.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .opacity(enabled ? 1 : 0.55)
+    }
+
+    private var cleanTitle: String? {
+        let raw = stream.name?.isEmpty == false ? stream.name : stream.description
+        guard let raw, !raw.isEmpty else { return nil }
+        let firstLine = raw.split(whereSeparator: \.isNewline).first.map(String.init) ?? raw
+        let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func badge(_ text: String, prominent: Bool = false) -> some View {
+        Text(text).font(Theme.Typography.eyebrow).tracking(1)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(prominent ? Theme.Palette.accent.opacity(0.22) : Theme.Palette.surface3, in: Capsule())
+            .foregroundStyle(prominent ? Theme.Palette.accent : Theme.Palette.textSecondary)
+    }
+}
+
+private struct iOSLoadingRow: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: Theme.Space.sm) {
+            ProgressView().tint(Theme.Palette.accent)
+            Text(text).font(Theme.Typography.body).foregroundStyle(Theme.Palette.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Palette.surface1, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+}
+
+private struct iOSEmptyRow: View {
+    let text: String
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Space.sm) {
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.Palette.textTertiary)
+            Text(text).font(Theme.Typography.body).foregroundStyle(Theme.Palette.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Palette.surface1, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+}
+
+private struct iOSLibraryChip: View {
+    @EnvironmentObject private var core: CoreBridge
+
+    var body: some View {
+        let saved = core.detailInLibrary
+        Button {
+            if saved {
+                if let id = core.metaDetails?.meta?.id { core.removeFromLibrary(id: id) }
+            } else {
+                core.addDetailToLibrary()
+            }
+        } label: {
+            Label(saved ? "In Library" : "Add to Library",
+                  systemImage: saved ? "bookmark.fill" : "bookmark")
+        }
+        .buttonStyle(ChipButtonStyle(selected: saved))
+    }
+}
