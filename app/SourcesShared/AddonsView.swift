@@ -1,11 +1,31 @@
 import SwiftUI
 
 /// Add-ons installed on your account, read live from the engine. You can remove a non-default addon
-/// here; install new ones from the Stremio web or mobile app (they sync down on next launch).
+/// here, and reorder them by long-press-drag; the order is persisted in UserDefaults under
+/// `addonOrder` (comma-separated addon ids). CoreBridge reads the same key when it builds `boardRows`
+/// so the catalog rows on Home/Discover follow this order too.
 struct AddonsView: View {
     @EnvironmentObject private var account: StremioAccount
     @EnvironmentObject private var core: CoreBridge
     @EnvironmentObject private var theme: ThemeManager
+
+    /// Persisted custom order of addon ids. Empty = fall back to the engine's own order.
+    /// Written as a comma-joined string because @AppStorage handles primitives, not arrays.
+    @AppStorage("addonOrder") private var addonOrderRaw: String = ""
+
+    /// The id currently being dragged, used to show a visual lift on the source row.
+    @State private var draggingId: String?
+
+    /// `core.addons` re-sorted according to the persisted order. Ids not present in the saved order
+    /// (newly installed add-ons) keep their engine position at the end, so a fresh addon doesn't jump.
+    private var orderedAddons: [CoreDescriptor] {
+        let order = addonOrderRaw.split(separator: ",").map(String.init)
+        guard !order.isEmpty else { return core.addons }
+        let index = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+        return core.addons.sorted {
+            (index[$0.id] ?? Int.max) < (index[$1.id] ?? Int.max)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -17,7 +37,13 @@ struct AddonsView: View {
                     } else if core.addons.isEmpty {
                         hint("No add-ons found on your account yet. Install them from the Stremio web or mobile app and they will sync down on next launch.")
                     } else {
-                        ForEach(core.addons) { addon in addonRow(addon) }
+                        Text("Long-press and drag to reorder. The order applies to catalogs on Home and Discover.")
+                            .font(Theme.Typography.label)
+                            .foregroundStyle(Theme.Palette.textTertiary)
+                            .padding(.bottom, Theme.Space.xs)
+                        ForEach(orderedAddons) { addon in
+                            addonRow(addon)
+                        }
                     }
                 }
                 .padding(.horizontal, Theme.Space.screenInset)
@@ -44,12 +70,49 @@ struct AddonsView: View {
             if !addon.isProtected {
                 Button { core.uninstallAddon(addon) } label: { Label("Remove", systemImage: "trash") }
                     .buttonStyle(ChipButtonStyle(selected: true, accent: Theme.Palette.danger, accentText: Theme.Palette.danger))
-                    .fixedSize()   // keep the Remove chip at its intrinsic width so a narrow phone row can't squeeze the label to one glyph per line
+                    .fixedSize()
             }
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.Palette.surface1, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        // Lift the row visually while it's the drag source.
+        .opacity(draggingId == addon.id ? 0.6 : 1)
+        .scaleEffect(draggingId == addon.id ? 1.02 : 1)
+        .animation(.easeOut(duration: 0.15), value: draggingId)
+        // iOS 16+: drag the addon id as a String payload.
+        .draggable(addon.id) {
+            // Drag preview: a small chip with the addon name so the user sees what's moving.
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal")
+                    .foregroundStyle(Theme.Palette.textTertiary)
+                Text(addon.manifest.name)
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.Palette.textPrimary)
+            }
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.vertical, Theme.Space.sm)
+            .background(Theme.Palette.surface2, in: RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
+            .onAppear { draggingId = addon.id }
+        }
+        // Drop onto a row → insert the dragged addon AT this row's position.
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first else { return false }
+            move(dragged, to: addon.id)
+            draggingId = nil
+            return true
+        }
+    }
+
+    /// Reorders `dragged` so it lands at the position currently occupied by `target`.
+    private func move(_ dragged: String, to target: String) {
+        var order = orderedAddons.map { $0.id }
+        guard let from = order.firstIndex(of: dragged),
+              let to = order.firstIndex(of: target),
+              from != to else { return }
+        order.remove(at: from)
+        order.insert(dragged, at: to)
+        addonOrderRaw = order.joined(separator: ",")
     }
 
     private func hint(_ text: String) -> some View {
