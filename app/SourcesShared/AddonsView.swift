@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// Add-ons installed on your account, read live from the engine. You can remove a non-default
-/// addon here and reorder them with a long-press context menu (Move Up / Move Down — works on
-/// iOS, tvOS, and macOS, since SwiftUI has no drag-and-drop APIs on tvOS). The order is persisted
-/// in UserDefaults under `addonOrder` (comma-separated addon transportUrls); CoreBridge reads the
-/// same key when it builds `boardRows`, so the catalog rows on Home/Discover follow this order too.
+/// addon here and reorder them: long-press-drag on iOS/macOS, or long-press → Move Up/Down on
+/// tvOS (SwiftUI has no drag-and-drop APIs on tvOS). The order is persisted in UserDefaults under
+/// `addonOrder` (comma-separated addon transportUrls); CoreBridge reads the same key when it
+/// builds `boardRows`, so the catalog rows on Home/Discover follow this order too.
 struct AddonsView: View {
     @EnvironmentObject private var account: StremioAccount
     @EnvironmentObject private var core: CoreBridge
@@ -12,6 +12,9 @@ struct AddonsView: View {
 
     /// Persisted custom order of addon transportUrls. Empty = fall back to the engine's own order.
     @AppStorage("addonOrder") private var addonOrderRaw: String = ""
+
+    /// The transportUrl currently being dragged (iOS/macOS only), used to lift the source row.
+    @State private var draggingURL: String?
 
     /// `core.addons` re-sorted according to the persisted order. Addons not present in the saved
     /// order (newly installed) keep their engine position at the end, so a fresh one doesn't jump.
@@ -34,10 +37,7 @@ struct AddonsView: View {
                     } else if core.addons.isEmpty {
                         hint("No add-ons found on your account yet. Install them from the Stremio web or mobile app and they will sync down on next launch.")
                     } else {
-                        Text("Long-press an add-on to move it up or down. The order applies to catalogs on Home and Discover.")
-                            .font(Theme.Typography.label)
-                            .foregroundStyle(Theme.Palette.textTertiary)
-                            .padding(.bottom, Theme.Space.xs)
+                        reorderHint
                         ForEach(orderedAddons) { addon in
                             addonRow(addon)
                         }
@@ -51,7 +51,21 @@ struct AddonsView: View {
         }
     }
 
+    /// Platform-aware reorder hint.
+    private var reorderHint: some View {
+        Text("Long-press an add-on to move it up or down. The order applies to catalogs on Home and Discover.")
+            .font(Theme.Typography.label)
+            .foregroundStyle(Theme.Palette.textTertiary)
+            .padding(.bottom, Theme.Space.xs)
+    }
+
     private func addonRow(_ addon: CoreDescriptor) -> some View {
+        addonRowBase(addon)
+            .contextMenu { moveMenu(for: addon) }
+    }
+
+    /// The platform-independent row: icon, name, capabilities, host, and Remove button.
+    private func addonRowBase(_ addon: CoreDescriptor) -> some View {
         HStack(alignment: .top, spacing: Theme.Space.md) {
             Image(systemName: addon.providesStreams
                   ? "play.rectangle.on.rectangle.fill"
@@ -87,7 +101,6 @@ struct AddonsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.Palette.surface1,
                     in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .contextMenu { moveMenu(for: addon) }
     }
 
     /// Long-press menu: move the addon one slot up or down. Disabled at the ends.
@@ -119,6 +132,8 @@ struct AddonsView: View {
         order.remove(at: from)
         order.insert(dragged, at: to)
         addonOrderRaw = order.joined(separator: ",")
+        // Ask the engine bridge to rebuild the Home/Discover catalog rows using the new order.
+        core.refreshBoardOrder()
     }
 
     private func hint(_ text: String) -> some View {
